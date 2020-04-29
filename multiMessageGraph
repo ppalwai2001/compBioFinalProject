@@ -1,0 +1,533 @@
+#These are the main imported files needed for the project
+
+#Help in calculating the different functions of the paper
+import math
+#Help in getting the maximum of the computer
+import sys
+#Help for visualizing the graph
+import matplotlib.pyplot as plt
+#It is able to utilize and draw graphs
+import networkx as nx
+#It is able to find the random neighbor based on their weight
+import random as rand
+from numpy.random import choice
+#It is is able to write to an excel file for the data
+import xlsxwriter
+
+#These are the global variables used in the paper
+
+#Alpha 1 is a bonus for choosing the same strat as your friends
+global alpha_1
+alpha_1 = 3
+
+#Alpha 2 is a punishment for choosing a differnet strat from your friends
+global alpha_2
+alpha_2 = 0
+
+#Otherwise know as U1, this is the payoff for individuals who chose strat A
+global payoff_a
+payoff_a = 0.4
+
+#Otherwise know as U2, this is the payoff for individuals who chose strat B
+global payoff_b
+payoff_b = 0.5
+
+#This is the sensitivity people have toward their neighbors payoff
+global payoff_sens
+payoff_sens = 0.1
+
+#This is the sensitivity people have toward changing their strat for their neighbors
+global env
+env = 0.1
+
+#This is the percent of people who start with a strat
+global initStrat
+initStrat = 0.01
+
+#This is the the threshold for difference in states
+global threshold
+threshold = 5
+
+#This is the first function that randomly assigns
+def initRandomAssign(G):
+    #Calculates the number of nodes in graph G
+    nodes = nx.number_of_nodes(G)
+
+    #Creates a dictionary to stores the state of an individual
+    tempDict = {}
+    for i in range(0, nodes):
+        tempDict[i] = {'state': ["C"]}
+    nx.set_node_attributes(G, tempDict)
+
+    #This helps create the random group of people who will have strat A
+    for i in range(0,round(nodes*initStrat)):
+        index = rand.randint(0,nodes-1)
+        tempDict[index]['state'][0] = "A"
+
+    #This helps create the random group of people who will have strat B
+    for i in range(0,round(nodes*initStrat)):
+        index = rand.randint(0,nodes-1)
+        tempDict[index]['state'][0] = "B"
+    return tempDict
+
+#At a certain time, this return an array for the payoff values for all nodes
+def payoffValues(G):
+    # Calculates the number of nodes in graph G
+    numNode = nx.number_of_nodes(G)
+
+    #Initalize values to be fill and returned in the later function
+    payoffValues = [0] * numNode
+    minVal = sys.maxsize
+
+    #Main Loop that goes through every single node to calculate its payoff
+    for i in range(0,numNode):
+        #This finds all of the neighbors for node I at a certain time
+        neighbors = [n for n in G[i]]
+
+        #This gets the state of the different nodes
+        attribute = nx.get_node_attributes(G,"state")
+
+        #This calculates the number of neighbors who are in state A, B, or ignorant with state C
+        numStateA = 0
+        numStateB = 0
+        for j in neighbors:
+            if attribute[j][0] == "A":
+                numStateA += 1
+            elif attribute[j][0] == "B":
+                numStateB += 1
+        numTot = len(neighbors)
+
+        #Based on I's state, this calculates the payoff using the values initialized above
+        if (attribute[i][0] == "A"):
+            payoff = round((numTot + (numStateA*alpha_1) - (numStateB*alpha_2))*payoff_a,3)
+        elif(attribute[i][0] == "B"):
+            payoff = round((numTot + (numStateB * alpha_1) - (numStateA * alpha_2)) * payoff_b,3)
+        else:
+            payoff = 0
+
+        #Sets the payoff values in the array
+        payoffValues[i] = payoff
+
+        #This helps to constantly check if a new minimum value has or has not been reached
+        if payoff < minVal:
+            minVal = payoff
+    return payoffValues, minVal
+
+#This calculates the neighbor who will be chosen to be matched with nodeChocen
+def choseMatch(nodeChosen,payoffVal,minVal,G):
+    #This finds all of the neighbors for nodeChosen
+    neighbors = [n for n in G[nodeChosen]]
+
+    #This calculates the number of nodes in Graph G
+    numNodes = nx.number_of_nodes(G)
+
+    #This helps initalize variables to be used to calculate the probabilities
+    indexValues = [0.0] * numNodes
+    sumTot = 0
+
+    #This calculates the different probabilities of each neighbor based on their payoff score
+    for j in neighbors:
+        sumTot += (payoffVal[j] - minVal + (1/payoff_sens))
+        indexValues[j] = (payoffVal[j] - minVal + (1/payoff_sens))
+
+    #This helps set all probabilites between 0 and 1 based on the total sum
+    indexValues = [x / sumTot for x in indexValues]
+
+    #This takes the elements of the list, and finds a variables based on the probabilities
+    randomElement = choice(range(len(indexValues)), p=indexValues)
+    return randomElement
+
+#This determines wheter a certain node should or should not adopt the strategy that its friend chose
+def elemChange(diffStrat,selectBuds,indexI,indexJ,payoff):
+    #This calculates the numerator of the probability
+    num = -1*(round((diffStrat[indexI][indexJ]*diffStrat[indexI][indexJ])/(selectBuds[indexI][indexJ]),4))
+
+    #This calculates the denominator of the probability
+    denom = (payoff[indexI] - payoff[indexJ])/env
+    if denom > 100:
+        denom = 100
+
+    #This is the end result of generating a random number and comparing it to the probability
+    result = math.exp(num)/(1 + math.exp(denom))
+    if(rand.random() < result):
+        return True
+    else:
+        diffStrat[indexI][indexJ] += 1
+        return False
+
+#This actually generates the graph and iterates it through one time
+def graphGenerator(G,usedDict,differStrat,selectedBuds):
+    #The graph given to be used for the project
+    graphUsed = G
+
+    #The dictionary that has the different state of the nodes
+    tempDict = usedDict
+
+    #The number of nodes in graph G
+    nodes = nx.number_of_nodes(G)
+
+    #The intial payoff values for the nodes from the graph
+    payoffVals,minVal = payoffValues(graphUsed)
+
+    #This goes through and changes every nodes in the graph based on the payoff values
+    for i in range(0,nodes):
+        neighborChosen = choseMatch(i,payoffVals,minVal,graphUsed)
+        selectedBuds[i][neighborChosen] += 1
+        doChange = elemChange(differStrat,selectedBuds,i,neighborChosen,payoffVals)
+        if(doChange):
+            tempDict[i]['state'][0] = tempDict[neighborChosen]['state'][0]
+
+    #This gets the current states of the nodes
+    currStates = nx.get_node_attributes(G, 'state')
+
+    #This calculates the current number of nodes in State A, B, or C
+    numStateA = 0
+    numStateB = 0
+    for i in range(0,nodes):
+        if currStates[i][0] == "A":
+            numStateA += 1
+        elif currStates[i][0] == "B":
+            numStateB += 1
+    return (nodes - numStateB - numStateA),numStateA,numStateB
+
+#This is able to read in a file and generate the correct graph from the file
+def read(fileName, space):
+    #This opens the files
+    file1 = open(fileName, "r")
+    n = list(file1.readline().strip().split(" "))
+
+    #This creates a random graph
+    G = nx.Graph()
+
+    #This loop keeps on adding edges to the graph to be returned as the correct graph
+    while True:
+        line = list(file1.readline().strip().split(space))
+        if line[0] == "End":
+            break
+        G.add_edge(int(line[0]), int(line[1]))
+    G.add_edge(0,1)
+    return G
+
+#This function helps display the results of a graph to be better visualized
+def drawGraph(G,dictUsed,nodes,name):
+    plt.clf()
+    color_map = ["g"]*nodes
+    for node in range (0,nodes-1):
+         if dictUsed[node]['state'][0] == "A":
+             color_map[node] = 'r'
+         elif dictUsed[node]['state'][0]  == "B":
+             color_map[node] = 'b'
+         else:
+             color_map[node] = 'g'
+    nx.draw(G, node_size = 100, node_color=color_map,with_labels = False,width=0.05)
+    plt.savefig("images2/"+name+".png")
+
+#This is the main function the generates a complete run of the graph
+def main(G,images):
+    #This is a random starting graph used for demonstration purposes
+    #G = nx.gnp_random_graph(500,0.1)
+
+    #This generates the initial random assignment of nodes in the graph
+    dictUsed = initRandomAssign(G)
+    currStates = nx.get_node_attributes(G, 'state')
+
+    #This is the number of nodes in graph G at any point
+    nodes = nx.number_of_nodes(G)
+
+    #Print spread of nodes for demonstration
+    if(images):
+        drawGraph(G, dictUsed, nodes, "labels_and_colors0")
+
+    #Helps store the values of state A, state B, and state C to see if the graph has converged
+    prevA = 0
+    prevB = 0
+    for i in range(0, nodes):
+        if currStates[i][0] == "A":
+            prevA += 1
+        elif currStates[i][0] == "B":
+            prevB += 1
+    prevIgn = nodes - prevA - prevB
+    ctr = 0
+
+    #This initialize the values of arrays for the amount of times two graphs have chosen the same strategy and accomplished their goal
+    differStrat = [[0] * nodes for row in range(0, nodes)]
+    selectedBuds = [[0] * nodes for row in range(0, nodes)]
+
+    #This is the main loop that continues to run until the graph has converged
+    while(True):
+        #Calculates the number of iterations the graph has undergone
+        ctr += 1
+
+        #Constantly checks wheter the newly generated states differ widely enough from the old states
+        numIgn,numA,numB = graphGenerator(G,dictUsed,differStrat,selectedBuds)
+        if (abs(prevIgn - numIgn) <= threshold and abs(prevA - numA) <= threshold and abs(prevB - numB) <= threshold):
+            break
+        prevIgn,prevA,prevB = numIgn, numA, numB
+
+        #Allows one to see if iterations of the loop are smoothly progressing
+        if(images):
+            print(numIgn, numA, numB)
+
+        #Print spread of nodes for demonstration
+        if(images):
+            drawGraph(G, dictUsed, nodes, "labels_and_colors"+str(ctr))
+    print(numIgn,numA,numB)
+    return numIgn,numA,numB
+
+#This is a large function the goes through each dataset and calulates the data from that dataset
+def gatherData(workbook, ctr2):
+    global alpha_2
+    global alpha_1
+    global payoff_sens
+
+    worksheet = workbook.add_worksheet()
+
+    alpha_2 = 3
+    payoff_sens = 0.1
+
+    space = ","
+    G = read("testData/rt_voteonedirection.txt", space)
+    print("rt_voteonedirection: Alpha_1")
+
+    worksheet.write(ctr2, 0, "rt_voteonedirection")
+    worksheet.write(ctr2, 1, "Alpha_1")
+    ctr2 += 1
+    for i in range(0, 150, 10):
+        list = []
+        list.append(i)
+
+        print(i, end=" ")
+        alpha_1 = i
+
+        numIgn,numA,numB = main(G,False)
+        list.append(numIgn)
+        list.append(numA)
+        list.append(numB)
+        for col_num, data in enumerate(list):
+            worksheet.write(ctr2, col_num, data)
+        ctr2 += 1
+    ctr2 += 1
+    print("\n")
+
+    space = " "
+    G = read("testData/ca-CSphd.txt", space)
+    print("Ca-csPhD: Alpha_1")
+
+    worksheet.write(ctr2, 0, "Ca-csPhD")
+    worksheet.write(ctr2, 1, "Alpha_1")
+    ctr2 += 1
+
+    for i in range(0, 150, 10):
+        list = []
+        list.append(i)
+
+        print(i, end=" ")
+        alpha_1 = i
+        numIgn, numA, numB = main(G,False)
+        list.append(numIgn)
+        list.append(numA)
+        list.append(numB)
+        for col_num, data in enumerate(list):
+            worksheet.write(ctr2, col_num, data)
+        ctr2 += 1
+    ctr2 += 1
+    print("\n")
+
+    G = read("testData/inf-euroroad.txt", space)
+    print("inf-euroroad: Alpha_1")
+
+    worksheet.write(ctr2, 0, "inf-euroroad")
+    worksheet.write(ctr2, 1, "Alpha_1")
+    ctr2 += 1
+    for i in range(0, 150, 10):
+        list = []
+        list.append(i)
+
+        print(i, end=" ")
+        alpha_1 = i
+
+        numIgn, numA, numB = main(G,False)
+        list.append(numIgn)
+        list.append(numA)
+        list.append(numB)
+        for col_num, data in enumerate(list):
+            worksheet.write(ctr2, col_num, data)
+        ctr2 += 1
+    ctr2 += 1
+    print("\n")
+
+    alpha_1 = 3
+    payoff_sens = 0.1
+
+    space = ","
+    G = read("testData/rt_voteonedirection.txt", space)
+    print("rt_voteonedirection: Alpha_2")
+
+    worksheet.write(ctr2, 0, "rt_voteonedirection")
+    worksheet.write(ctr2, 1, "Alpha_2")
+    ctr2 += 1
+    for i in range(0, 150, 10):
+        list = []
+        list.append(i)
+
+        print(i, end=" ")
+        alpha_2 = i
+        numIgn, numA, numB = main(G,False)
+        list.append(numIgn)
+        list.append(numA)
+        list.append(numB)
+        for col_num, data in enumerate(list):
+            worksheet.write(ctr2, col_num, data)
+        ctr2 += 1
+    ctr2 += 1
+    print("\n")
+
+    space = " "
+    G = read("testData/ca-CSphd.txt",space)
+    print("Ca-csPhD: Alpha_2")
+
+    worksheet.write(ctr2, 0, "ca-CSphd")
+    worksheet.write(ctr2, 1, "Alpha_2")
+    ctr2 += 1
+    for i in range(0,150,10):
+        list = []
+        list.append(i)
+
+        print(i, end = " ")
+        alpha_2 = i
+        numIgn, numA, numB = main(G,False)
+        list.append(numIgn)
+        list.append(numA)
+        list.append(numB)
+        for col_num, data in enumerate(list):
+            worksheet.write(ctr2, col_num, data)
+        ctr2 += 1
+    ctr2 += 1
+
+    print("\n")
+
+    G = read("testData/inf-euroroad.txt", space)
+    print("inf-euroroad: Alpha_2")
+
+    worksheet.write(ctr2, 0, "inf-euroroad")
+    worksheet.write(ctr2, 1, "Alpha_2")
+    ctr2 += 1
+    for i in range(0, 150, 10):
+        list = []
+        list.append(i)
+
+        print(i, end=" ")
+        alpha_2 = i
+        numIgn, numA, numB = main(G,False)
+        list.append(numIgn)
+        list.append(numA)
+        list.append(numB)
+        for col_num, data in enumerate(list):
+            worksheet.write(ctr2, col_num, data)
+        ctr2 += 1
+    ctr2 += 1
+    print("\n")
+
+    alpha_1 = 3
+    alpha_2 = 3
+
+    space = ","
+
+    ctr = -2
+    G = read("testData/rt_voteonedirection.txt", space)
+    print("rt_voteonedirection: Qu")
+
+    worksheet.write(ctr2, 0, "rt_voteonedirection")
+    worksheet.write(ctr2, 1, "Qu")
+    ctr2 += 1
+    while(ctr <= 3):
+        list = []
+        list.append(ctr)
+
+        print(ctr, end=" ")
+        payoff_sens = math.pow(10,i)
+        ctr += 0.5
+
+        numIgn, numA, numB = main(G,False)
+        list.append(numIgn)
+        list.append(numA)
+        list.append(numB)
+        for col_num, data in enumerate(list):
+            worksheet.write(ctr2, col_num, data)
+        ctr2 += 1
+    ctr2 += 1
+    print("\n")
+
+    space = " "
+
+    ctr = -2
+    G = read("testData/ca-CSphd.txt", space)
+    print("ca-CSphd: Qu")
+
+    worksheet.write(ctr2, 0, "ca-CSphd")
+    worksheet.write(ctr2, 1, "Qu")
+    ctr2 += 1
+    while (ctr <= 3):
+        list = []
+        list.append(ctr)
+
+        print(ctr, end=" ")
+        payoff_sens = math.pow(10, i)
+        ctr += 0.5
+        numIgn, numA, numB = main(G,False)
+        list.append(numIgn)
+        list.append(numA)
+        list.append(numB)
+        for col_num, data in enumerate(list):
+            worksheet.write(i + 1, col_num, data)
+        ctr2 += 1
+    ctr2 += 1
+    print("\n")
+
+    ctr = -2
+    G = read("testData/inf-euroroad.txt", space)
+    print("inf-euroroad: Qu")
+
+    worksheet.write(ctr2, 0, "inf-euroroad")
+    worksheet.write(ctr2, 1, "Qu")
+    ctr2 += 1
+    while (ctr <= 3):
+        list = []
+        list.append(ctr)
+
+        print(ctr, end=" ")
+        payoff_sens = math.pow(10, i)
+        ctr += 0.5
+
+        numIgn, numA, numB = main(G,False)
+        list.append(numIgn)
+        list.append(numA)
+        list.append(numB)
+        for col_num, data in enumerate(list):
+            worksheet.write(i + 1, col_num, data)
+        ctr2 += 1
+    ctr2 += 1
+    print("\n")
+    return ctr2
+
+def createData():
+    #This initialize the inital excel worksheet
+    workbook = xlsxwriter.Workbook('excelData/main_data.xlsx')
+    worksheet = workbook.add_worksheet()
+    ctr2 = 0
+    ctr3 = 2
+
+    #This helps create a place to store the data to see how progress is coming along
+    while(True):
+        workbook = xlsxwriter.Workbook("excelData/main_data"+str(ctr3)+".xlsx")
+        gatherData(workbook,ctr2)
+        ctr3 += 1
+        workbook.close()
+
+def testRun():
+    G = nx.gnp_random_graph(500, 0.1)
+    main(G,True)
+
+if __name__ == "__main__":
+    #testRun()
+    createData()
